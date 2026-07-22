@@ -22,8 +22,19 @@ mkdir -p "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$NAME"
 cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 
-echo "==> Ad-hoc code signing (so macOS remembers granted permissions)…"
-codesign --force --deep --sign - "$APP"
+# Prefer the stable self-signed identity (from setup-signing.sh) so granted
+# permissions — especially Accessibility for auto-paste — survive rebuilds.
+# Fall back to ad-hoc if it hasn't been set up yet.
+IDENTITY="NotchVoice Self-Signed"
+if security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
+    echo "==> Code signing with stable identity '$IDENTITY'…"
+    codesign --force --deep --sign "$IDENTITY" "$APP"
+else
+    echo "==> Ad-hoc code signing…"
+    echo "    (!) Run 'bash setup-signing.sh' once so Accessibility permission"
+    echo "        stops resetting on every rebuild."
+    codesign --force --deep --sign - "$APP"
+fi
 
 echo ""
 echo "Done ->  $APP"

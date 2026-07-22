@@ -1,17 +1,19 @@
 import AppKit
 
-/// Coordinates the pieces: hold hotkey -> transcribe speech -> show live text in
-/// the notch pill -> copy the final transcript to the clipboard.
+/// Coordinates the pieces. Two push-to-talk modes, both transcribed on-device
+/// with Parakeet:
+///   • Right Option  → dictation: your words are pasted at the cursor.
+///   • Right Command → AI: your words are sent to OpenAI; the reply shows in the
+///     pill, goes to the clipboard, and is logged to Obsidian.
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
     private let hotkey = HotkeyManager()
-    private let speech = SpeechManager()
+    private let speech = ParakeetSpeechManager()
     private let hud = NotchHUD()
 
     private var isRecording = false
-    private var sessionFinalized = false
-    private var lastTranscript = ""
+    private var currentMode: HotkeyManager.Mode = .dictate
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -19,7 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wireHotkey()
 
         Permissions.requestMicrophone()
-        Permissions.requestSpeech()
+        // Needed to auto-insert the transcript at the cursor on release.
+        Permissions.requestAccessibility()
+
+        // Start loading/downloading the Parakeet model now so the first
+        // dictation isn't cold.
+        speech.warmUp()
 
         updateStatus(recording: false)
     }
@@ -29,8 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Hold Right ⌥ (Option) to dictate", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Text appears in the notch & is copied", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Hold Right ⌥ (Option) → dictate to cursor", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Hold Right ⌘ (Command) → ask AI", action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit NotchVoice", action: #selector(quit), keyEquivalent: "q"))
         for item in menu.items { item.target = self }
@@ -46,17 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Hotkey
 
     private func wireHotkey() {
-        hotkey.onPress = { [weak self] in self?.startDictation() }
-        hotkey.onRelease = { [weak self] in self?.stopDictation() }
+        hotkey.onPress = { [weak self] mode in self?.startDictation(mode: mode) }
+        hotkey.onRelease = { [weak self] _ in self?.stopDictation() }
+        hotkey.onCancel = { [weak self] _ in self?.cancelDictation() }
         hotkey.start()
     }
 
     // MARK: - Speech
 
     private func wireSpeech() {
-        speech.onTranscript = { [weak self] text, isFinal in
-            DispatchQueue.main.async { self?.handleTranscript(text, isFinal: isFinal) }
-        }
         speech.onLevel = { [weak self] level in
             self?.hud.setLevel(level)
         }
@@ -72,13 +77,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Session lifecycle
 
-    private func startDictation() {
+    private func startDictation(mode: HotkeyManager.Mode) {
         guard !isRecording else { return }
         isRecording = true
-        sessionFinalized = false
-        lastTranscript = ""
+        currentMode = mode
 
-        hud.show(text: "Listening…")
+        hud.show(text: mode == .ai ? "Ask AI…" : "Listening…")
         updateStatus(recording: true)
         speech.start()
     }
@@ -87,32 +91,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard isRecording else { return }
         isRecording = false
         updateStatus(recording: false)
-        speech.stop()
+        hud.update(text: speech.isModelReady ? "Transcribing…" : "Downloading model…")
 
-        // Guarantee the pill closes/copies even if a final result never arrives.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            self?.finishSession()
+        // Capture the mode now so the async result is routed correctly even if a
+        // new session starts before transcription finishes.
+        let mode = currentMode
+        speech.stop { [weak self] result in
+            self?.handleResult(mode: mode, result: result)
         }
     }
 
-    private func handleTranscript(_ full: String, isFinal: Bool) {
-        lastTranscript = full
-        hud.update(text: full.isEmpty ? "Listening…" : full)
-        if isFinal { finishSession() }
+    private func cancelDictation() {
+        guard isRecording else { return }
+        isRecording = false
+        updateStatus(recording: false)
+        speech.cancel()
+        hud.hide(after: 0.1)
     }
 
-    /// Copy the transcript to the clipboard and collapse the pill. Safe to call
-    /// more than once (from the final result and/or the release fallback).
-    private func finishSession() {
-        guard !sessionFinalized else { return }
-        sessionFinalized = true
-        let text = lastTranscript
-        if text.isEmpty {
-            hud.hide(after: 0.2)
-        } else {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-            hud.showCopied(text)
+    private func handleResult(mode: HotkeyManager.Mode, result: Result<String, Error>) {
+        switch result {
+        case .failure(let error):
+            hud.flashError(error.localizedDescription)
+        case .success(let raw):
+            let text = TranscriptCleaner.clean(raw)
+            guard !text.isEmpty else {
+                hud.hide(after: 0.2)
+                return
+            }
+            switch mode {
+            case .dictate:
+                // Paster always sets the clipboard; it also presses ⌘V when we're
+                // trusted for Accessibility, so the text lands at the cursor.
+                Paster.insert(text)
+                hud.showCopied(text)
+            case .ai:
+                handleAI(prompt: text)
+            }
         }
+    }
+
+    // MARK: - AI mode
+
+    private func handleAI(prompt: String) {
+        hud.update(text: "Thinking…")
+        Task {
+            do {
+                let answer = try await ClaudeResponder.ask(prompt)
+                await MainActor.run { self.deliverAI(question: prompt, answer: answer) }
+            } catch {
+                await MainActor.run { self.hud.flashError(error.localizedDescription) }
+            }
+        }
+    }
+
+    private func deliverAI(question: String, answer: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(answer, forType: .string)
+        ObsidianLogger.append(question: question, answer: answer)
+        // Pill can only show so much — the full answer is on the clipboard and
+        // in Obsidian.
+        let preview = answer.count > 160 ? String(answer.prefix(160)) + "…" : answer
+        hud.showCopied(preview)
     }
 }

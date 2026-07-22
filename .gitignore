@@ -3,3 +3,6 @@
 build/
 *.log
 .DS_Store
+
+# Local project notes — not for GitHub
+CLAUDE.md

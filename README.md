@@ -1,5 +1,7 @@
 # NotchVoice 🎙️
 
+Built by [Lakhan Gupta](https://github.com/LakhanxGupta) for his own daily use.
+
 Push-to-talk dictation for macOS. **Hold the Right Option (⌥) key and speak** —
 your words appear live in a Dynamic-Island-style pill under the notch, with a
 waveform that follows your actual voice level. On release the transcript is

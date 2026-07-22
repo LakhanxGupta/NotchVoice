@@ -196,9 +196,13 @@ final class NotchHUD {
         )
         win.isOpaque = false
         win.backgroundColor = .clear
-        win.level = .statusBar
+        // Above normal app windows *and* fullscreen apps. `.statusBar` (25) is
+        // beaten by fullscreen video/windows in their own Space; the overlay
+        // level plus the space-joining behaviors below let the pill float over
+        // everything.
+        win.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.overlayWindow)))
         win.ignoresMouseEvents = true
-        win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         win.hasShadow = true
 
         let pill = NSView(frame: win.contentView!.bounds)

@@ -149,9 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(answer, forType: .string)
         ObsidianLogger.append(question: question, answer: answer)
-        // Pill can only show so much — the full answer is on the clipboard and
-        // in Obsidian.
-        let preview = answer.count > 160 ? String(answer.prefix(160)) + "…" : answer
-        hud.showCopied(preview)
+        // The answer is not shown in the pill by design — it goes straight to
+        // Obsidian (and the clipboard). The pill only confirms it landed.
+        hud.showCopied("Saved to Obsidian")
     }
 }

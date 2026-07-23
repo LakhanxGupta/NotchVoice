@@ -11,6 +11,7 @@ final class NotchHUD {
     private var waveform: WaveformView?
     private var checkView: NSImageView?
     private var label: NSTextField?
+    private var labelWidth: NSLayoutConstraint?
     private var hideWorkItem: DispatchWorkItem?
 
     private let height: CGFloat = 42
@@ -19,6 +20,7 @@ final class NotchHUD {
     private let hInset: CGFloat = 18
     private let leadingSlot: CGFloat = 26   // waveform / check area
     private let gap: CGFloat = 10
+    private let sideMargin: CGFloat = 12     // keep the pill off the screen edges
 
     /// SF Pro Rounded gives the pill a softer, more "island" personality
     /// than plain system type.
@@ -61,7 +63,8 @@ final class NotchHUD {
         let shown = text.isEmpty ? "Copied" : text
         setText(shown, placeholder: false)
         layout(for: shown, animated: true)
-        hide(after: 1.9)
+        // Linger long enough to actually read the transcript before it fades.
+        hide(after: 3.6)
     }
 
     func flashError(_ message: String) {
@@ -119,8 +122,16 @@ final class NotchHUD {
 
     // MARK: - Animations
 
+    /// The screen to pin the pill under the notch. `NSScreen.main` follows the
+    /// *key window*, which is nil when you're on the bare desktop — so the pill
+    /// would silently fail to appear there. Fall back to the built-in/first
+    /// screen (the one that carries the notch and menu bar).
+    private var targetScreen: NSScreen? {
+        NSScreen.main ?? NSScreen.screens.first
+    }
+
     private func animateIn() {
-        guard let window, let screen = NSScreen.main else { return }
+        guard let window, let screen = targetScreen else { return }
         let target = frameRect(width: window.frame.width, screen: screen)
         var start = target
         start.origin.y += 14
@@ -154,12 +165,24 @@ final class NotchHUD {
     // MARK: - Layout
 
     private func layout(for text: String, animated: Bool) {
-        guard let window, let screen = NSScreen.main else { return }
+        guard let window, let screen = targetScreen else { return }
         let textWidth = (text as NSString)
             .size(withAttributes: [.font: labelFont]).width
         let contentWidth = leadingSlot + gap + ceil(textWidth)
-        let width = min(max(minWidth, contentWidth + hInset * 2), maxWidth)
+        // Never let the pill exceed the screen: cap at `maxWidth`, but also at
+        // the visible width minus a margin on each side, so a long transcript
+        // can't run off the right edge.
+        let screenCap = screen.visibleFrame.width - sideMargin * 2
+        let width = min(max(minWidth, contentWidth + hInset * 2), maxWidth, screenCap)
         let target = frameRect(width: width, screen: screen)
+
+        // Pin the label to its *final* width up front and settle the layout now,
+        // so it truncates exactly once. Otherwise, while the window animates its
+        // width, the label re-truncates every frame and the tail visibly
+        // flickers on the right edge. The pill's rounded mask clips it cleanly.
+        let textArea = max(0, width - hInset * 2 - leadingSlot - gap)
+        labelWidth?.constant = textArea
+        window.contentView?.layoutSubtreeIfNeeded()
 
         if animated {
             NSAnimationContext.runAnimationGroup { ctx in
@@ -174,7 +197,10 @@ final class NotchHUD {
 
     private func frameRect(width: CGFloat, screen: NSScreen) -> NSRect {
         let f = screen.frame
-        let x = f.midX - width / 2
+        let vf = screen.visibleFrame
+        // Center under the notch, then clamp so the pill stays fully on-screen.
+        let x = min(max(f.midX - width / 2, vf.minX + sideMargin),
+                    vf.maxX - sideMargin - width)
         // On notched Macs safeAreaInsets.top == the notch height; otherwise fall
         // back to the menu-bar thickness. Sit the pill fully *below* that so the
         // physical notch never covers it.
@@ -236,6 +262,11 @@ final class NotchHUD {
         text.translatesAutoresizingMaskIntoConstraints = false
         pill.addSubview(text)
 
+        // Fixed-width label (set per-layout) instead of a trailing pin, so it
+        // doesn't re-truncate during the window's width animation.
+        let textWidthConstraint = text.widthAnchor.constraint(
+            equalToConstant: minWidth - hInset * 2 - leadingSlot - gap)
+
         NSLayoutConstraint.activate([
             wave.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: hInset),
             wave.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
@@ -248,9 +279,10 @@ final class NotchHUD {
             check.heightAnchor.constraint(equalToConstant: 19),
 
             text.leadingAnchor.constraint(equalTo: wave.trailingAnchor, constant: gap),
-            text.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -hInset),
+            textWidthConstraint,
             text.centerYAnchor.constraint(equalTo: pill.centerYAnchor)
         ])
+        labelWidth = textWidthConstraint
 
         win.contentView = pill
         window = win

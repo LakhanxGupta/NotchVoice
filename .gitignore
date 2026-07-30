@@ -6,3 +6,7 @@ build/
 
 # Local project notes — not for GitHub
 CLAUDE.md
+
+# EXPERIMENT (qwen3-asr-experiment): Apple's prebuilt MLX shader library,
+# fetched by fetch-mlx-metallib.sh. 131 MB — not something to commit.
+Vendor/

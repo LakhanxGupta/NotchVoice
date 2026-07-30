@@ -48,13 +48,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let header = NSMenuItem(title: "Transcription engine", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
-        for engine in SpeechEngine.allCases {
+        for engine in SpeechEngine.available {
             let item = NSMenuItem(
                 title: engine.title, action: #selector(selectEngine(_:)), keyEquivalent: "")
             item.representedObject = engine.rawValue
             item.state = engine == speech.speechEngine ? .on : .off
             menu.addItem(item)
             engineItems.append(item)
+        }
+        if !SpeechEngine.isMLXAvailable {
+            // Say why the Qwen options aren't here, rather than silently hiding
+            // them — selecting one would abort the process (missing metallib).
+            let note = NSMenuItem(
+                title: "Qwen3-ASR unavailable — mlx.metallib not built",
+                action: nil, keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
         }
 
         menu.addItem(.separator())

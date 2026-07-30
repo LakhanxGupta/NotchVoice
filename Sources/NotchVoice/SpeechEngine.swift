@@ -44,16 +44,42 @@ enum SpeechEngine: String, CaseIterable {
         }
     }
 
+    /// Whether this engine needs MLX (and therefore `mlx.metallib`).
+    var requiresMLX: Bool { modelId != nil }
+
+    // MARK: - MLX availability
+
+    /// MLX aborts the whole process — a C++ `abort()`, not a catchable Swift
+    /// error — if it can't find `mlx.metallib`, which SwiftPM does not build.
+    /// It has to be compiled with Xcode's Metal toolchain (see
+    /// `scripts/build_mlx_metallib.sh` in the speech-swift checkout) and placed
+    /// next to the executable. Command Line Tools alone do not ship `metal`.
+    ///
+    /// So: check before offering an MLX engine, rather than dying on selection.
+    static let isMLXAvailable: Bool = {
+        let exe = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
+        let sibling = exe.deletingLastPathComponent().appendingPathComponent("mlx.metallib")
+        return FileManager.default.fileExists(atPath: sibling.path)
+    }()
+
+    /// Engines that can actually run in this build.
+    static var available: [SpeechEngine] {
+        allCases.filter { !$0.requiresMLX || isMLXAvailable }
+    }
+
     // MARK: - Persistence
 
     private static let key = "speechEngine"
 
-    /// The engine chosen last run. Falls back to Parakeet, so a bad Qwen
-    /// state can never wedge the app across a restart.
+    /// The engine chosen last run. Falls back to Parakeet if the stored value
+    /// is unknown (e.g. after reverting this branch) *or* names an MLX engine
+    /// in a build without `mlx.metallib` — otherwise a stored Qwen choice
+    /// would abort the process on every launch, with no UI left to fix it.
     static var saved: SpeechEngine {
         get {
             guard let raw = UserDefaults.standard.string(forKey: key),
-                let engine = SpeechEngine(rawValue: raw)
+                let engine = SpeechEngine(rawValue: raw),
+                !engine.requiresMLX || isMLXAvailable
             else { return .default }
             return engine
         }

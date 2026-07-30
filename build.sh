@@ -22,6 +22,23 @@ mkdir -p "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$NAME"
 cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 
+# EXPERIMENT (qwen3-asr-experiment branch): MLX loads its shader library from
+# beside the executable, and SwiftPM does not build it — see
+# .build/checkouts/speech-swift/scripts/build_mlx_metallib.sh. Without it, MLX
+# calls abort() the moment a Qwen engine is selected, killing the whole app.
+# Bundle it when present; the Qwen menu items hide themselves when it isn't.
+METALLIB="$(swift build -c release --show-bin-path)/mlx.metallib"
+if [[ -f "$METALLIB" ]]; then
+    echo "==> Bundling mlx.metallib (Qwen3-ASR engines enabled)…"
+    cp "$METALLIB" "$APP/Contents/MacOS/mlx.metallib"
+else
+    echo "==> No mlx.metallib — Qwen3-ASR engines will be hidden."
+    echo "    To enable (needs full Xcode, not just Command Line Tools):"
+    echo "      sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+    echo "      xcodebuild -downloadComponent MetalToolchain"
+    echo "      BUILD_DIR=\"$ROOT/.build\" bash .build/checkouts/speech-swift/scripts/build_mlx_metallib.sh release"
+fi
+
 # Prefer the stable self-signed identity (from setup-signing.sh) so granted
 # permissions — especially Accessibility for auto-paste — survive rebuilds.
 # Fall back to ad-hoc if it hasn't been set up yet.

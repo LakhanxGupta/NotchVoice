@@ -12,7 +12,7 @@ Two modes:
   words go to **Claude Code (read-only)**; the answer is **copied to the
   clipboard and appended to an Obsidian log** — the pill just confirms it landed.
 
-Transcription is fully **on-device** with **NVIDIA Parakeet TDT** (via the
+Transcription is fully **on-device** with **NVIDIA Parakeet Unified 0.6B** (via the
 [FluidAudio](https://github.com/FluidInference/FluidAudio) Swift package),
 running on the Apple Neural Engine — private, free, and offline.
 

@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var isRecording = false
     private var currentMode: HotkeyManager.Mode = .dictate
+    /// EXPERIMENT (qwen3-asr-experiment branch): the engine-picker menu items,
+    /// held so their checkmarks can be updated on switch.
+    private var engineItems: [NSMenuItem] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -38,10 +41,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Hold Right ⌥ (Option) → dictate to cursor", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Hold Right ⌘ (Command) → ask AI", action: nil, keyEquivalent: ""))
+
+        // EXPERIMENT (qwen3-asr-experiment branch): engine picker. Delete this
+        // block and `engineItems` to revert to Parakeet-only.
+        menu.addItem(.separator())
+        let header = NSMenuItem(title: "Transcription engine", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        for engine in SpeechEngine.allCases {
+            let item = NSMenuItem(
+                title: engine.title, action: #selector(selectEngine(_:)), keyEquivalent: "")
+            item.representedObject = engine.rawValue
+            item.state = engine == speech.speechEngine ? .on : .off
+            menu.addItem(item)
+            engineItems.append(item)
+        }
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit NotchVoice", action: #selector(quit), keyEquivalent: "q"))
         for item in menu.items { item.target = self }
         statusItem.menu = menu
+    }
+
+    /// EXPERIMENT: switch backends. Loading is async, so the pill reports
+    /// progress — the Qwen bundles are a ~1–2 GB first-run download.
+    @objc private func selectEngine(_ sender: NSMenuItem) {
+        guard
+            let raw = sender.representedObject as? String,
+            let engine = SpeechEngine(rawValue: raw),
+            engine != speech.speechEngine
+        else { return }
+
+        speech.setEngine(engine)
+        for item in engineItems {
+            item.state = (item.representedObject as? String) == raw ? .on : .off
+        }
+        hud.show(text: "Loading \(engine.title)…")
+        hud.hide(after: 2.5)
     }
 
     private func updateStatus(recording: Bool) {

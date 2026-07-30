@@ -20,7 +20,11 @@ final class ParakeetSpeechManager {
     /// Whether the Parakeet model has finished its one-time load/download.
     private(set) var isModelReady = false
 
-    private let transcriber = Transcriber()
+    /// EXPERIMENT (qwen3-asr-experiment branch): the backend is injected rather
+    /// than hardcoded, so Parakeet and Qwen3-ASR can be A/B'd at runtime.
+    private var transcriber: any Transcribing
+    private(set) var speechEngine: SpeechEngine
+
     private let engine = AVAudioEngine()
 
     // Guards the capture/pre-roll buffers, touched from the audio thread.
@@ -41,13 +45,43 @@ final class ParakeetSpeechManager {
 
     // MARK: - Lifecycle
 
+    init(engine: SpeechEngine = .saved) {
+        self.speechEngine = engine
+        self.transcriber = Self.makeTranscriber(for: engine)
+    }
+
+    private static func makeTranscriber(for engine: SpeechEngine) -> any Transcribing {
+        guard let modelId = engine.modelId else { return Transcriber() }
+        return QwenTranscriber(modelId: modelId)
+    }
+
+    /// EXPERIMENT: swap the transcription backend at runtime. Frees the old
+    /// Qwen weights first — two 0.6B+ models resident at once is something a
+    /// 16 GB machine notices — then warms the new one.
+    func setEngine(_ engine: SpeechEngine) {
+        guard engine != speechEngine else { return }
+        let previous = transcriber
+        Task { await (previous as? QwenTranscriber)?.unload() }
+
+        speechEngine = engine
+        SpeechEngine.saved = engine
+        transcriber = Self.makeTranscriber(for: engine)
+        isModelReady = false
+        warmUp()
+    }
+
     /// Begin loading the model at launch so the first dictation isn't cold.
     func warmUp() {
+        // Capture both, so a load that finishes after the user switched engines
+        // doesn't report the wrong backend as ready.
+        let loading = transcriber
+        let engineAtStart = speechEngine
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.transcriber.preload()
+                try await loading.preload()
                 await MainActor.run {
+                    guard self.speechEngine == engineAtStart else { return }
                     self.isModelReady = true
                     self.onModelReady?()
                 }
@@ -99,10 +133,18 @@ final class ParakeetSpeechManager {
             return
         }
 
-        Task { [weak self] in
-            guard let self else { return }
+        let backend = transcriber
+        let engineUsed = speechEngine
+        Task {
+            let started = Date()
             do {
-                let text = try await self.transcriber.transcribe(samples: samples, sampleRate: rate)
+                let text = try await backend.transcribe(samples: samples, sampleRate: rate)
+                // EXPERIMENT: record real-world latency per engine.
+                EngineLog.record(
+                    engine: engineUsed,
+                    audioSeconds: Double(samples.count) / rate,
+                    transcribeSeconds: Date().timeIntervalSince(started),
+                    transcript: text)
                 await MainActor.run { completion(.success(text)) }
             } catch {
                 await MainActor.run { completion(.failure(error)) }

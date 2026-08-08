@@ -113,6 +113,9 @@ click **"Always Allow"**.
 - **Obsidian log:** appended to `…/Documents/AI/Voice Assistant Log.md`.
 - Transcription happens **on release** (one final result, ~100 ms warm), so
   there's no live partial text in the pill by design.
+- **Warm-up:** at launch, after the model loads, it runs one silent
+  transcription in the background so the first *real* dictation isn't slower
+  than the rest.
 
 ## License
 [PolyForm Noncommercial 1.0.0](LICENSE.md) — free for any noncommercial use.

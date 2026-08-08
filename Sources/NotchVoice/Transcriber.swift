@@ -26,7 +26,14 @@ actor Transcriber: Transcribing {
                 throw error
             }
         }
-        let task = Task { try await asr.loadModels() }
+        let task = Task {
+            try await asr.loadModels()
+            // A freshly loaded model hasn't actually run yet — the Neural
+            // Engine does extra one-time setup on its first real inference.
+            // Absorb that cost here, on silence, so it doesn't land on the
+            // user's first real dictation instead.
+            await warmInference()
+        }
         loadTask = task
         do {
             try await task.value
@@ -35,6 +42,31 @@ actor Transcriber: Transcribing {
             loadTask = nil
             throw error
         }
+    }
+
+    /// Runs one throwaway transcription on silence to force any one-time,
+    /// first-call model setup to happen now rather than on the first real
+    /// utterance. Best-effort: failures here shouldn't block warm-up from
+    /// being considered done, since the model itself already loaded fine.
+    private func warmInference() async {
+        let sampleRate = 16_000.0
+        let sampleCount = Int(sampleRate / 2) // 0.5s — enough to exercise the model
+        guard
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sampleRate,
+                channels: 1,
+                interleaved: false),
+            let buffer = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(sampleCount))
+        else {
+            return
+        }
+        buffer.frameLength = AVAudioFrameCount(sampleCount)
+        buffer.floatChannelData![0].update(repeating: 0, count: sampleCount)
+
+        _ = try? await asr.transcribe(buffer)
     }
 
     /// Transcribe mono 32-bit float samples captured at `sampleRate`. Parakeet

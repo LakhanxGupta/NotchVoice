@@ -4,7 +4,7 @@ import FluidAudio
 /// Wraps FluidAudio's on-device Parakeet model. An actor so the (non-Sendable)
 /// model is only ever touched from one place, and the ~600 MB download that
 /// happens on first use is loaded exactly once.
-actor Transcriber: Transcribing {
+actor Transcriber {
 
     private let asr = UnifiedAsrManager()
     private var loadTask: Task<Void, Error>?

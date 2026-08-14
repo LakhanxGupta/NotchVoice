@@ -16,11 +16,8 @@ Transcription is fully **on-device** with **NVIDIA Parakeet Unified 0.6B** (via 
 [FluidAudio](https://github.com/FluidInference/FluidAudio) Swift package),
 running on the Apple Neural Engine — private, free, and offline.
 
-**Qwen3-ASR** is available as an optional alternative engine, picked from the
-menu bar. See [Transcription engines](#transcription-engines).
-
 ## Requirements
-- **Apple Silicon** Mac, **macOS 15 (Sequoia)** or newer
+- **Apple Silicon** Mac, **macOS 14 (Sonoma)** or newer
 - Swift 6 toolchain (`xcode-select --install`, recent Xcode)
 - For AI mode: the [`claude`](https://claude.com/claude-code) CLI on your `PATH`
 
@@ -49,52 +46,6 @@ On first launch macOS prompts for these. If a prompt is missed, enable them in
   in your Obsidian AI log; the pill shows "Saved to Obsidian".
 
 The pill lingers a few seconds so you can read the result before it fades.
-
-## Transcription engines
-
-**Parakeet Unified 0.6B is the default** and needs no setup. Qwen3-ASR is
-offered alongside it so the two can be compared on real dictation rather than
-on published benchmarks — pick one from the menu-bar item, and the choice
-persists across restarts.
-
-Measured here on an M3 (16 GB), short push-to-talk utterances:
-
-| Engine | Runs on | Mean speed | Mean latency |
-|---|---|---|---|
-| Parakeet Unified 0.6B (int8) | Neural Engine | 34.7× realtime | 0.17 s |
-| Qwen3-ASR 0.6B (8-bit) | GPU via MLX | 12.4× realtime | ~0.32 s |
-
-Both are comfortably fast enough for push-to-talk. Note the published 123×
-figure for Parakeet does not transfer to 2–5 second clips, where fixed overhead
-dominates.
-
-Every transcription appends a row to
-`~/Library/Application Support/NotchVoice/engine-timings.csv`
-(timestamp, engine, audio seconds, transcribe seconds, speed, transcript) so
-accuracy and speed can be judged on your own voice.
-
-### Enabling the Qwen3-ASR engines
-
-They stay hidden until MLX's shader library is present, because MLX calls
-`abort()` — uncatchable from Swift — if it can't find one:
-
-```bash
-bash fetch-mlx-metallib.sh   # once, ~50 MB download
-bash build.sh
-```
-
-`swift build` never compiles Metal, and the `metal` compiler ships only with
-full Xcode (not Command Line Tools). Rather than require a 10 GB download,
-`fetch-mlx-metallib.sh` downloads the *already compiled* `mlx.metallib` that
-Apple's MLX team publishes in the `mlx-metal` wheel on PyPI, and `build.sh`
-bundles it next to the executable. No Python runs at runtime — pip is only a
-download mechanism, and the app stays a pure Swift binary.
-
-The version is pinned to the MLX core inside the `mlx-swift` checkout; the
-script refuses to run if the two ever drift apart, since a mismatched shader
-library aborts or produces garbage.
-
-On first selection each Qwen model downloads ~1 GB from HuggingFace.
 
 ## Code signing (why it matters)
 macOS remembers permissions per **signing identity**. Ad-hoc signing changes
